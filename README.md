@@ -45,7 +45,7 @@ bun run flash -- --disk diskN --yes
 
 Requires [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on macOS for verified flashes.
 
-Device class defaults to `pi4` (also works for 3B+ in practice with the right class — set `RPI_DEVICE_CLASS` to `pi5`, `pi4`, `cm5`, `cm4`, or `zero2w`). Original Pi 1 / Model B+ is too old for this image pipeline; use a Pi 3B+ or newer.
+Device class defaults to `pi3` (Pi 3B / 3B+ rev 1.2). Override with `RPI_DEVICE_CLASS`: `pi3`, `pi4`, `pi5`, `cm4`, `cm5`, or `zero2w`.
 
 ## On the Pi
 
