@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+printf '=== UPS board status ===\n'
+printf 'hostname: %s\n' "$(hostname)"
+printf 'uptime: %s\n' "$(uptime -p 2>/dev/null || uptime)"
+printf '\n'
+
+printf '=== network ===\n'
+ip -4 -br addr 2>/dev/null || true
+nmcli -t -f DEVICE,STATE,CONNECTION device 2>/dev/null || true
+if command -v tailscale >/dev/null 2>&1; then
+  printf 'tailscale: %s\n' "$(tailscale ip -4 2>/dev/null | tr '\n' ' ')"
+fi
+printf '\n'
+
+printf '=== services ===\n'
+systemctl is-active ups-firstboot.service ups-tailscale.service ups-monitor.timer ups-monitor.service NetworkManager.service 2>/dev/null || true
+printf '\n'
+
+if [ -r /etc/ups-board/monitor.env ]; then
+  printf '=== monitor env (redacted) ===\n'
+  # shellcheck disable=SC1091
+  set +u
+  . /etc/ups-board/monitor.env
+  set -u
+  printf 'UPS_BACKEND=%s\n' "${UPS_BACKEND:-}"
+  printf 'UPS_NUT_NAME=%s\n' "${UPS_NUT_NAME:-}"
+  printf 'UPS_HTTP_URL=%s\n' "${UPS_HTTP_URL:-}"
+  printf 'HEALTHCHECKS_HEARTBEAT_URL=%s\n' "${HEALTHCHECKS_HEARTBEAT_URL:+set}"
+  printf 'HEALTHCHECKS_MAINS_URL=%s\n' "${HEALTHCHECKS_MAINS_URL:+set}"
+  printf '\n'
+fi
+
+if command -v upsc >/dev/null 2>&1 && [ -n "${UPS_NUT_NAME:-}" ]; then
+  printf '=== upsc %s ===\n' "$UPS_NUT_NAME"
+  upsc "$UPS_NUT_NAME" 2>/dev/null | head -40 || echo '(upsc failed)'
+  printf '\n'
+fi
+
+if [ -f /var/lib/ups-board/last-mains-state ]; then
+  printf '=== last mains state: %s ===\n\n' "$(cat /var/lib/ups-board/last-mains-state)"
+fi
+
+for log in \
+  /var/log/ups-monitor.log \
+  /boot/firmware/ups-monitor.log \
+  /var/log/ups-firstboot.log \
+  /boot/firmware/ups-firstboot.log \
+  /var/log/ups-tailscale.log \
+  /boot/firmware/ups-tailscale.log; do
+  if [ -s "$log" ]; then
+    printf '=== tail %s ===\n' "$log"
+    tail -40 "$log"
+    printf '\n'
+  fi
+done

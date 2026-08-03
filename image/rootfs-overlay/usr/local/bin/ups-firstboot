@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+STATE_DIR=/var/lib/ups-board
+DONE_FILE="$STATE_DIR/firstboot.done"
+FAT_LOG=/boot/firmware/ups-firstboot.log
+SYS_LOG=/var/log/ups-firstboot.log
+PROVISIONING_FILE=""
+
+mkdir -p "$STATE_DIR"
+touch "$SYS_LOG" 2>/dev/null || SYS_LOG=/dev/null
+touch "$FAT_LOG" 2>/dev/null || FAT_LOG=/dev/null
+exec > >(tee -a "$SYS_LOG" "$FAT_LOG") 2>&1
+
+log() {
+  printf '[%s] %s\n' "$(date -Is)" "$*"
+}
+
+load_provisioning_file() {
+  local candidate
+  for candidate in /boot/firmware/ups-board.env /boot/ups-board.env /etc/ups-board/provisioning.env; do
+    if [ -r "$candidate" ]; then
+      PROVISIONING_FILE="$candidate"
+      log "loading provisioning file $candidate"
+      set -a
+      set +u
+      # shellcheck disable=SC1090
+      . "$candidate" || log "WARNING: failed to fully source $candidate"
+      set -u
+      set +a
+      return
+    fi
+  done
+  log "no provisioning file found; continuing with baked-in defaults"
+}
+
+set_unique_hostname() {
+  local serial suffix prefix hostname
+  serial=$(awk '/Serial/ {print $3}' /proc/cpuinfo | tail -n 1)
+  suffix=${serial: -6}
+  if [ -z "$suffix" ]; then
+    suffix=$(date +%H%M%S)
+  fi
+
+  prefix=${UPS_BOARD_HOSTNAME_PREFIX:-skg-rpi-ups}
+  hostname=${UPS_BOARD_HOSTNAME:-"$prefix-$suffix"}
+
+  log "setting hostname to $hostname"
+  hostnamectl set-hostname "$hostname" || printf '%s\n' "$hostname" > /etc/hostname
+  if grep -q '^127\.0\.1\.1' /etc/hosts; then
+    sed -i "s/^127\\.0\\.1\\.1.*/127.0.1.1\t$hostname/" /etc/hosts
+  else
+    printf '127.0.1.1\t%s\n' "$hostname" >> /etc/hosts
+  fi
+
+  UPS_BOARD_EFFECTIVE_HOSTNAME="$hostname"
+}
+
+regenerate_ssh_host_keys() {
+  log "regenerating SSH host keys"
+  rm -f /etc/ssh/ssh_host_*
+  ssh-keygen -A
+  systemctl restart ssh 2>/dev/null || true
+}
+
+configure_wifi() {
+  if [ -z "${UPS_BOARD_WIFI_SSID:-}" ]; then
+    log "no UPS_BOARD_WIFI_SSID configured; assuming wired or preconfigured network"
+    return
+  fi
+
+  log "configuring WiFi for SSID ${UPS_BOARD_WIFI_SSID}"
+  if [ -n "${UPS_BOARD_WIFI_COUNTRY:-}" ] && command -v iw >/dev/null 2>&1; then
+    iw reg set "$UPS_BOARD_WIFI_COUNTRY" || true
+  fi
+
+  if command -v nmcli >/dev/null 2>&1; then
+    systemctl enable --now NetworkManager.service || true
+    nmcli radio wifi on || true
+    nmcli connection delete ups-board-wifi >/dev/null 2>&1 || true
+    nmcli connection add type wifi ifname wlan0 con-name ups-board-wifi ssid "$UPS_BOARD_WIFI_SSID"
+    if [ -n "${UPS_BOARD_WIFI_PASSWORD:-}" ]; then
+      nmcli connection modify ups-board-wifi wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$UPS_BOARD_WIFI_PASSWORD"
+    fi
+    nmcli connection modify ups-board-wifi connection.autoconnect yes
+    nmcli connection up ups-board-wifi || true
+  fi
+}
+
+wait_for_network() {
+  local attempts=${UPS_BOARD_NETWORK_WAIT_ATTEMPTS:-60}
+  local i
+  log "waiting for network/DNS"
+  for i in $(seq 1 "$attempts"); do
+    if getent hosts healthchecks.io >/dev/null 2>&1 || getent hosts login.tailscale.com >/dev/null 2>&1; then
+      log "network is ready"
+      return 0
+    fi
+    sleep 2
+  done
+  log "network did not become ready before timeout"
+  return 1
+}
+
+if [ -f "$DONE_FILE" ]; then
+  log "first boot already completed"
+  exit 0
+fi
+
+log "starting UPS board first boot provisioning"
+load_provisioning_file
+if [ -r /etc/ups-board/monitor.env ]; then
+  set -a
+  set +u
+  # shellcheck disable=SC1091
+  . /etc/ups-board/monitor.env || true
+  set -u
+  set +a
+fi
+set_unique_hostname
+regenerate_ssh_host_keys
+configure_wifi
+wait_for_network || true
+date -Is > "$DONE_FILE"
+systemctl disable ups-firstboot.service >/dev/null 2>&1 || true
+log "first boot provisioning complete"

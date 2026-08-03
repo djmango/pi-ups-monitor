@@ -1,0 +1,14 @@
+[Unit]
+Description=UPS board first-boot provisioning
+Wants=network.target
+After=network.target
+ConditionPathExists=!/var/lib/ups-board/firstboot.done
+
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+ExecStart=/usr/local/bin/ups-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

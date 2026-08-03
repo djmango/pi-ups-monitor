@@ -1,0 +1,11 @@
+{
+  "name": "pi-ups-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless Raspberry Pi image that monitors a UPS and reports to Healthchecks.io",
+  "scripts": {
+    "build": "./scripts/build-image.sh",
+    "flash": "./scripts/flash-image.sh",
+    "init-sops": "./scripts/build-image.sh --init-sops"
+  }
+}

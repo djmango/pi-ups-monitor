@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+STATE_DIR=/var/lib/ups-board
+DONE_FILE="$STATE_DIR/tailscale.done"
+FAT_LOG=/boot/firmware/ups-tailscale.log
+SYS_LOG=/var/log/ups-tailscale.log
+PROVISIONING_FILE=""
+
+MAX_ATTEMPTS=${UPS_BOARD_TAILSCALE_MAX_ATTEMPTS:-30}
+ATTEMPT_BACKOFF=${UPS_BOARD_TAILSCALE_BACKOFF_SECS:-30}
+NETWORK_WAIT_ATTEMPTS=${UPS_BOARD_TAILSCALE_NETWORK_WAIT_ATTEMPTS:-90}
+
+mkdir -p "$STATE_DIR"
+touch "$SYS_LOG" 2>/dev/null || SYS_LOG=/dev/null
+touch "$FAT_LOG" 2>/dev/null || FAT_LOG=/dev/null
+exec > >(tee -a "$SYS_LOG" "$FAT_LOG") 2>&1
+
+log() {
+  printf '[%s] %s\n' "$(date -Is)" "$*"
+}
+
+load_provisioning_file() {
+  local candidate
+  for candidate in /boot/firmware/ups-board.env /boot/ups-board.env /etc/ups-board/provisioning.env; do
+    if [ -r "$candidate" ]; then
+      PROVISIONING_FILE="$candidate"
+      log "loading provisioning file $candidate"
+      set -a
+      set +u
+      # shellcheck disable=SC1090
+      . "$candidate" || log "WARNING: failed to fully source $candidate"
+      set -u
+      set +a
+      return
+    fi
+  done
+  log "no provisioning file found in /boot/firmware, /boot, or /etc/ups-board"
+}
+
+network_ready() {
+  if ! getent hosts login.tailscale.com >/dev/null 2>&1; then
+    return 1
+  fi
+  if curl --silent --show-error --fail --head --max-time 10 \
+      https://login.tailscale.com/ >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+wait_for_network() {
+  local i
+  log "waiting for network/DNS/HTTPS reach to Tailscale control plane"
+  for i in $(seq 1 "$NETWORK_WAIT_ATTEMPTS"); do
+    if network_ready; then
+      log "network ready (attempt $i)"
+      return 0
+    fi
+    sleep 2
+  done
+  log "network not ready after ${NETWORK_WAIT_ATTEMPTS} attempts"
+  return 1
+}
+
+install_tailscale() {
+  if command -v tailscale >/dev/null 2>&1; then
+    return 0
+  fi
+  log "installing Tailscale via tailscale.com/install.sh"
+  export DEBIAN_FRONTEND=noninteractive
+  if ! curl -fsSL https://tailscale.com/install.sh | sh; then
+    log "tailscale install failed"
+    return 1
+  fi
+  if ! command -v tailscale >/dev/null 2>&1; then
+    log "tailscale binary still missing after install"
+    return 1
+  fi
+  return 0
+}
+
+is_joined() {
+  tailscale ip -4 >/dev/null 2>&1
+}
+
+cleanup_key_after_success() {
+  if [ -n "$PROVISIONING_FILE" ] && [ "${UPS_BOARD_KEEP_PROVISIONING_FILE:-0}" != "1" ]; then
+    log "shredding provisioning file $PROVISIONING_FILE after successful enrollment"
+    shred -u "$PROVISIONING_FILE" 2>/dev/null || rm -f "$PROVISIONING_FILE"
+  fi
+}
+
+try_enroll_once() {
+  local hostname_arg=${UPS_BOARD_EFFECTIVE_HOSTNAME:-$(hostname)}
+  log "joining Tailscale as $hostname_arg"
+  # shellcheck disable=SC2086
+  if ! timeout 180 tailscale up \
+      --auth-key="$TAILSCALE_AUTHKEY" \
+      --hostname="$hostname_arg" \
+      ${TAILSCALE_UP_ARGS:---accept-routes --accept-dns=false}; then
+    log "tailscale up failed (exit $?)"
+    return 1
+  fi
+  if ! is_joined; then
+    log "tailscale up returned success but no Tailscale IP is available"
+    return 1
+  fi
+  log "Tailscale IP: $(tailscale ip -4 2>/dev/null | tr '\n' ' ')"
+  return 0
+}
+
+log "ups-tailscale-enroll starting (pid $$)"
+
+if [ -f "$DONE_FILE" ]; then
+  log "Tailscale already enrolled (done marker present); exiting"
+  exit 0
+fi
+
+load_provisioning_file
+if [ -z "${TAILSCALE_AUTHKEY:-}" ]; then
+  log "TAILSCALE_AUTHKEY not set; skipping Tailscale enrollment"
+  exit 0
+fi
+log "auth key present (length=${#TAILSCALE_AUTHKEY})"
+
+if is_joined; then
+  log "Tailscale already has an IP before any enrollment attempt"
+  date -Is > "$DONE_FILE"
+  cleanup_key_after_success
+  exit 0
+fi
+
+for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+  log "=== enrollment attempt $attempt/$MAX_ATTEMPTS ==="
+
+  if ! wait_for_network; then
+    log "network unavailable; sleeping $ATTEMPT_BACKOFF s before retry"
+    sleep "$ATTEMPT_BACKOFF"
+    continue
+  fi
+
+  if ! install_tailscale; then
+    log "tailscale install failed; sleeping $ATTEMPT_BACKOFF s before retry"
+    sleep "$ATTEMPT_BACKOFF"
+    continue
+  fi
+
+  if ! systemctl enable --now tailscaled.service; then
+    log "failed to start tailscaled.service; sleeping $ATTEMPT_BACKOFF s"
+    sleep "$ATTEMPT_BACKOFF"
+    continue
+  fi
+
+  if try_enroll_once; then
+    date -Is > "$DONE_FILE"
+    cleanup_key_after_success
+    log "enrollment succeeded on attempt $attempt"
+    exit 0
+  fi
+
+  log "enrollment attempt $attempt failed; sleeping $ATTEMPT_BACKOFF s before retry"
+  sleep "$ATTEMPT_BACKOFF"
+done
+
+log "exhausted $MAX_ATTEMPTS attempts without joining tailnet"
+exit 1

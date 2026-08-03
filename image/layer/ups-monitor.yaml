@@ -1,0 +1,264 @@
+# METABEGIN
+# X-Env-Layer-Name: ups-monitor
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: Headless UPS monitor with Healthchecks.io reporting and first-boot provisioning.
+# X-Env-Layer-Requires: rpi-user-credentials,systemd-net-min,systemd-timesyncd,openssh-server
+#
+# X-Env-VarRequires: IGconf_device_user1
+# X-Env-VarRequires-Valid: string
+#
+# X-Env-VarPrefix: ups
+#
+# X-Env-Var-tailscale_authkey:
+# X-Env-Var-tailscale_authkey-Desc: Optional Tailscale auth key baked into the image.
+# X-Env-Var-tailscale_authkey-Required: n
+# X-Env-Var-tailscale_authkey-Valid: string-or-empty
+# X-Env-Var-tailscale_authkey-Set: y
+#
+# X-Env-Var-tailscale_up_args: --accept-routes --accept-dns=false
+# X-Env-Var-tailscale_up_args-Desc: Extra arguments appended to `tailscale up`.
+# X-Env-Var-tailscale_up_args-Required: n
+# X-Env-Var-tailscale_up_args-Valid: string
+# X-Env-Var-tailscale_up_args-Set: y
+#
+# X-Env-Var-wifi_ssid:
+# X-Env-Var-wifi_ssid-Desc: Optional WiFi SSID baked into the image.
+# X-Env-Var-wifi_ssid-Required: n
+# X-Env-Var-wifi_ssid-Valid: string-or-empty
+# X-Env-Var-wifi_ssid-Set: y
+#
+# X-Env-Var-wifi_password:
+# X-Env-Var-wifi_password-Desc: Optional WiFi password (WPA2 PSK) baked into the image.
+# X-Env-Var-wifi_password-Required: n
+# X-Env-Var-wifi_password-Valid: string-or-empty
+# X-Env-Var-wifi_password-Set: y
+#
+# X-Env-Var-wifi_country: US
+# X-Env-Var-wifi_country-Desc: Two-letter ISO country code for the WiFi regulatory domain.
+# X-Env-Var-wifi_country-Required: n
+# X-Env-Var-wifi_country-Valid: string
+# X-Env-Var-wifi_country-Set: y
+#
+# X-Env-Var-hostname_prefix: skg-rpi-ups
+# X-Env-Var-hostname_prefix-Desc: Hostname prefix; serial suffix is appended on first boot.
+# X-Env-Var-hostname_prefix-Required: n
+# X-Env-Var-hostname_prefix-Valid: string
+# X-Env-Var-hostname_prefix-Set: y
+#
+# X-Env-Var-healthchecks_heartbeat_url:
+# X-Env-Var-healthchecks_heartbeat_url-Desc: Healthchecks.io ping URL for alive heartbeats.
+# X-Env-Var-healthchecks_heartbeat_url-Required: n
+# X-Env-Var-healthchecks_heartbeat_url-Valid: string-or-empty
+# X-Env-Var-healthchecks_heartbeat_url-Set: y
+#
+# X-Env-Var-healthchecks_mains_url:
+# X-Env-Var-healthchecks_mains_url-Desc: Healthchecks.io ping URL for wall-power status (fail when on battery).
+# X-Env-Var-healthchecks_mains_url-Required: n
+# X-Env-Var-healthchecks_mains_url-Valid: string-or-empty
+# X-Env-Var-healthchecks_mains_url-Set: y
+#
+# X-Env-Var-backend: nut
+# X-Env-Var-backend-Desc: UPS backend (nut or http).
+# X-Env-Var-backend-Required: n
+# X-Env-Var-backend-Valid: string
+# X-Env-Var-backend-Set: y
+#
+# X-Env-Var-nut_name: ups@localhost
+# X-Env-Var-nut_name-Desc: NUT UPS name (upsc target).
+# X-Env-Var-nut_name-Required: n
+# X-Env-Var-nut_name-Valid: string
+# X-Env-Var-nut_name-Set: y
+#
+# X-Env-Var-http_url:
+# X-Env-Var-http_url-Desc: HTTP JSON status URL when backend=http.
+# X-Env-Var-http_url-Required: n
+# X-Env-Var-http_url-Valid: string-or-empty
+# X-Env-Var-http_url-Set: y
+#
+# X-Env-Var-http_on_battery_path: on_battery
+# X-Env-Var-http_on_battery_path-Desc: Dotted JSON path for on-battery flag.
+# X-Env-Var-http_on_battery_path-Required: n
+# X-Env-Var-http_on_battery_path-Valid: string
+# X-Env-Var-http_on_battery_path-Set: y
+#
+# X-Env-Var-http_battery_percent_path: battery.charge
+# X-Env-Var-http_battery_percent_path-Desc: Dotted JSON path for battery percent.
+# X-Env-Var-http_battery_percent_path-Required: n
+# X-Env-Var-http_battery_percent_path-Valid: string
+# X-Env-Var-http_battery_percent_path-Set: y
+#
+# X-Env-Var-http_runtime_seconds_path: battery.runtime
+# X-Env-Var-http_runtime_seconds_path-Desc: Dotted JSON path for runtime seconds.
+# X-Env-Var-http_runtime_seconds_path-Required: n
+# X-Env-Var-http_runtime_seconds_path-Valid: string
+# X-Env-Var-http_runtime_seconds_path-Set: y
+#
+# X-Env-Var-http_load_percent_path: ups.load
+# X-Env-Var-http_load_percent_path-Desc: Dotted JSON path for load percent.
+# X-Env-Var-http_load_percent_path-Required: n
+# X-Env-Var-http_load_percent_path-Valid: string
+# X-Env-Var-http_load_percent_path-Set: y
+#
+# X-Env-Var-http_headers:
+# X-Env-Var-http_headers-Desc: Optional curl -H headers separated by || (e.g. Authorization: Bearer x||Accept: application/json).
+# X-Env-Var-http_headers-Required: n
+# X-Env-Var-http_headers-Valid: string-or-empty
+# X-Env-Var-http_headers-Set: y
+#
+# X-Env-Var-poll_interval_secs: 60
+# X-Env-Var-poll_interval_secs-Desc: systemd timer OnUnitActiveSec for UPS polls.
+# X-Env-Var-poll_interval_secs-Required: n
+# X-Env-Var-poll_interval_secs-Valid: string
+# X-Env-Var-poll_interval_secs-Set: y
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - avahi-daemon
+    - ca-certificates
+    - curl
+    - iproute2
+    - iw
+    - jq
+    - libnss-mdns
+    - network-manager
+    - nut-client
+    - procps
+    - python3
+    - rfkill
+    - wireless-regdb
+    - wpasupplicant
+  customize-hooks:
+    - |-
+      set -eu
+      if [ -d "${SRCROOT:-}/rootfs-overlay" ]; then
+        cp -a "${SRCROOT}/rootfs-overlay/." "$1/"
+      fi
+    - |-
+      set -eu
+      mkdir -p "$1/etc/ups-board"
+      umask 077
+      TARGET="$1/etc/ups-board/monitor.env"
+      : > "$TARGET"
+      write_kv() {
+        local key=$1 value=$2 escaped
+        escaped=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
+        printf "%s='%s'\n" "$key" "$escaped" >> "$TARGET"
+      }
+      write_kv UPS_BACKEND "${IGconf_ups_backend:-nut}"
+      write_kv UPS_NUT_NAME "${IGconf_ups_nut_name:-ups@localhost}"
+      write_kv UPS_HTTP_URL "${IGconf_ups_http_url:-}"
+      write_kv UPS_HTTP_ON_BATTERY_PATH "${IGconf_ups_http_on_battery_path:-on_battery}"
+      write_kv UPS_HTTP_BATTERY_PERCENT_PATH "${IGconf_ups_http_battery_percent_path:-battery.charge}"
+      write_kv UPS_HTTP_RUNTIME_SECONDS_PATH "${IGconf_ups_http_runtime_seconds_path:-battery.runtime}"
+      write_kv UPS_HTTP_LOAD_PERCENT_PATH "${IGconf_ups_http_load_percent_path:-ups.load}"
+      write_kv UPS_HTTP_HEADERS "${IGconf_ups_http_headers:-}"
+      write_kv HEALTHCHECKS_HEARTBEAT_URL "${IGconf_ups_healthchecks_heartbeat_url:-}"
+      write_kv HEALTHCHECKS_MAINS_URL "${IGconf_ups_healthchecks_mains_url:-}"
+      write_kv UPS_POLL_INTERVAL_SECS "${IGconf_ups_poll_interval_secs:-60}"
+      write_kv UPS_BOARD_HOSTNAME_PREFIX "${IGconf_ups_hostname_prefix:-skg-rpi-ups}"
+      chmod 0644 "$TARGET"
+      chown 0:0 "$TARGET"
+    - |-
+      set -eu
+      if [ -n "${IGconf_ups_tailscale_authkey:-}" ] || [ -n "${IGconf_ups_wifi_ssid:-}" ]; then
+        mkdir -p "$1/etc/ups-board"
+        umask 077
+        TARGET="$1/etc/ups-board/provisioning.env"
+        : > "$TARGET"
+        write_kv() {
+          local key=$1 value=$2 escaped
+          escaped=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
+          printf "%s='%s'\n" "$key" "$escaped" >> "$TARGET"
+        }
+        if [ -n "${IGconf_ups_tailscale_authkey:-}" ]; then
+          write_kv TAILSCALE_AUTHKEY "${IGconf_ups_tailscale_authkey}"
+          write_kv TAILSCALE_UP_ARGS "${IGconf_ups_tailscale_up_args:-}"
+        fi
+        if [ -n "${IGconf_ups_wifi_ssid:-}" ]; then
+          write_kv UPS_BOARD_WIFI_SSID "${IGconf_ups_wifi_ssid}"
+          write_kv UPS_BOARD_WIFI_PASSWORD "${IGconf_ups_wifi_password:-}"
+          write_kv UPS_BOARD_WIFI_COUNTRY "${IGconf_ups_wifi_country:-}"
+        fi
+        write_kv UPS_BOARD_HOSTNAME_PREFIX "${IGconf_ups_hostname_prefix:-skg-rpi-ups}"
+        chmod 0600 "$TARGET"
+        chown 0:0 "$TARGET"
+      fi
+    - |-
+      set -eu
+      if [ -n "${IGconf_ups_wifi_country:-}" ]; then
+        mkdir -p "$1/etc/default"
+        echo "REGDOMAIN=${IGconf_ups_wifi_country}" > "$1/etc/default/crda"
+      fi
+    - |-
+      set -eu
+      if [ -n "${IGconf_ups_wifi_ssid:-}" ]; then
+        rm -f "$1/etc/systemd/network/02-wlan0.network"
+        mkdir -p "$1/etc/NetworkManager/system-connections"
+        NM_FILE="$1/etc/NetworkManager/system-connections/ups-board-wifi.nmconnection"
+        umask 077
+        {
+          echo "[connection]"
+          echo "id=ups-board-wifi"
+          echo "type=wifi"
+          echo "interface-name=wlan0"
+          echo "autoconnect=true"
+          echo "autoconnect-priority=100"
+          echo ""
+          echo "[wifi]"
+          echo "mode=infrastructure"
+          echo "powersave=2"
+          printf 'ssid=%s\n' "${IGconf_ups_wifi_ssid}"
+          echo ""
+          echo "[wifi-security]"
+          echo "key-mgmt=wpa-psk"
+          printf 'psk=%s\n' "${IGconf_ups_wifi_password}"
+          echo ""
+          echo "[ipv4]"
+          echo "method=auto"
+          echo ""
+          echo "[ipv6]"
+          echo "method=auto"
+          echo "addr-gen-mode=default"
+        } > "$NM_FILE"
+        chmod 0600 "$NM_FILE"
+        chown 0:0 "$NM_FILE"
+      fi
+    - |-
+      set -eu
+      CMDLINE=$1/boot/firmware/cmdline.txt
+      if [ -f "$CMDLINE" ]; then
+        sed -i 's|root=[^ ]*|root=LABEL=ROOT|g' "$CMDLINE"
+        if ! grep -q 'rootfstype=ext4' "$CMDLINE"; then
+          sed -i 's|$| rootfstype=ext4|' "$CMDLINE"
+        fi
+        if ! grep -q 'rootwait' "$CMDLINE"; then
+          sed -i 's|$| rootwait|' "$CMDLINE"
+        fi
+        if ! grep -q 'console=tty1' "$CMDLINE"; then
+          sed -i 's|$| console=tty1|' "$CMDLINE"
+        fi
+      fi
+    - |-
+      set -eu
+      interval="${IGconf_ups_poll_interval_secs:-60}"
+      sed -i "s/@UPS_POLL_INTERVAL@/${interval}/g" \
+        "$1/etc/systemd/system/ups-monitor.timer"
+      chmod 0755 \
+        "$1/usr/local/bin/ups-firstboot" \
+        "$1/usr/local/bin/ups-tailscale-enroll" \
+        "$1/usr/local/bin/ups-monitor" \
+        "$1/usr/local/bin/ups-board-status"
+      user="$IGconf_device_user1"
+      ug=$(awk -F: -v u="$user" '$1==u{print $3":"$4}' "$1/etc/passwd")
+      chown "$ug" "$1/home/$user"
+      [ ! -d "$1/home/$user/.ssh" ] || chown -R "$ug" "$1/home/$user/.ssh"
+    - $BDEBSTRAP_HOOKS/enable-units "$1" NetworkManager avahi-daemon
+    - |-
+      set -eu
+      mkdir -p "$1/etc/systemd/system/multi-user.target.wants" \
+               "$1/etc/systemd/system/timers.target.wants"
+      ln -sf ../ups-firstboot.service "$1/etc/systemd/system/multi-user.target.wants/ups-firstboot.service"
+      ln -sf ../ups-tailscale.service "$1/etc/systemd/system/multi-user.target.wants/ups-tailscale.service"
+      ln -sf ../ups-monitor.timer "$1/etc/systemd/system/timers.target.wants/ups-monitor.timer"

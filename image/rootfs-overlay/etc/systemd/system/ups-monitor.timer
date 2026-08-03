@@ -1,0 +1,13 @@
+[Unit]
+Description=Run UPS monitor on a timer
+Requires=ups-monitor.service
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=@UPS_POLL_INTERVAL@
+AccuracySec=10s
+Persistent=true
+Unit=ups-monitor.service
+
+[Install]
+WantedBy=timers.target

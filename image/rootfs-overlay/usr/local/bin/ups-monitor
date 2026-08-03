@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# Poll UPS status and report to Healthchecks.io.
+set -uo pipefail
+
+FAT_LOG=/boot/firmware/ups-monitor.log
+SYS_LOG=/var/log/ups-monitor.log
+STATE_DIR=/var/lib/ups-board
+LAST_STATE="$STATE_DIR/last-mains-state"
+
+mkdir -p "$STATE_DIR"
+touch "$SYS_LOG" 2>/dev/null || SYS_LOG=/dev/null
+touch "$FAT_LOG" 2>/dev/null || FAT_LOG=/dev/null
+
+log() {
+  printf '[%s] %s\n' "$(date -Is)" "$*" | tee -a "$SYS_LOG" "$FAT_LOG" >/dev/null
+}
+
+load_env() {
+  local candidate
+  for candidate in /etc/ups-board/monitor.env /boot/firmware/ups-board.env /boot/ups-board.env; do
+    if [ -r "$candidate" ]; then
+      set -a
+      set +u
+      # shellcheck disable=SC1090
+      . "$candidate" || true
+      set -u
+      set +a
+    fi
+  done
+}
+
+json_get() {
+  # Usage: json_get <json> <dotted.path>
+  local json=$1 path=$2
+  python3 - "$json" "$path" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+path = sys.argv[2]
+cur = data
+for part in path.split("."):
+    if part == "":
+        continue
+    if isinstance(cur, dict) and part in cur:
+        cur = cur[part]
+    else:
+        print("")
+        sys.exit(0)
+if cur is None:
+    print("")
+elif isinstance(cur, bool):
+    print("true" if cur else "false")
+else:
+    print(cur)
+PY
+}
+
+truthy_on_battery() {
+  local v
+  v=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  case "$v" in
+    1|true|yes|y|on|ob|onbattery|on-battery|battery) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+read_nut() {
+  local name=${UPS_NUT_NAME:-ups@localhost}
+  local out status
+  if ! command -v upsc >/dev/null 2>&1; then
+    log "upsc not installed"
+    return 1
+  fi
+  if ! out=$(upsc "$name" 2>/dev/null); then
+    log "upsc $name failed"
+    return 1
+  fi
+  status=$(printf '%s\n' "$out" | awk -F: '/^ups.status:/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')
+  ON_BATTERY=0
+  case " $status " in
+    *" OB "*|*" OB"|*"OB "*|OB) ON_BATTERY=1 ;;
+  esac
+  # Also treat explicit OL absence + OB variants
+  if printf '%s' "$status" | grep -Eq '(^| )OB($| )'; then
+    ON_BATTERY=1
+  fi
+  BATTERY_PERCENT=$(printf '%s\n' "$out" | awk -F: '/^battery.charge:/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')
+  RUNTIME_SECONDS=$(printf '%s\n' "$out" | awk -F: '/^battery.runtime:/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')
+  LOAD_PERCENT=$(printf '%s\n' "$out" | awk -F: '/^ups.load:/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')
+  INPUT_VOLTAGE=$(printf '%s\n' "$out" | awk -F: '/^input.voltage:/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')
+  UPS_STATUS="$status"
+  BACKEND_DETAIL="nut:$name"
+  return 0
+}
+
+read_http() {
+  local url=${UPS_HTTP_URL:-}
+  local body headers=()
+  if [ -z "$url" ]; then
+    log "UPS_HTTP_URL is empty"
+    return 1
+  fi
+  if [ -n "${UPS_HTTP_HEADERS:-}" ]; then
+    local h remaining=$UPS_HTTP_HEADERS
+    while [ -n "$remaining" ]; do
+      case "$remaining" in
+        *'||'*)
+          h=${remaining%%||*}
+          remaining=${remaining#*||}
+          ;;
+        *)
+          h=$remaining
+          remaining=
+          ;;
+      esac
+      [ -n "$h" ] && headers+=(-H "$h")
+    done
+  fi
+  if ! body=$(curl --silent --show-error --fail --max-time 15 "${headers[@]}" "$url"); then
+    log "HTTP UPS fetch failed for $url"
+    return 1
+  fi
+  local flag
+  flag=$(json_get "$body" "${UPS_HTTP_ON_BATTERY_PATH:-on_battery}")
+  ON_BATTERY=0
+  if truthy_on_battery "$flag"; then
+    ON_BATTERY=1
+  fi
+  BATTERY_PERCENT=$(json_get "$body" "${UPS_HTTP_BATTERY_PERCENT_PATH:-battery.charge}")
+  RUNTIME_SECONDS=$(json_get "$body" "${UPS_HTTP_RUNTIME_SECONDS_PATH:-battery.runtime}")
+  LOAD_PERCENT=$(json_get "$body" "${UPS_HTTP_LOAD_PERCENT_PATH:-ups.load}")
+  INPUT_VOLTAGE=""
+  UPS_STATUS=$([ "$ON_BATTERY" -eq 1 ] && echo OB || echo OL)
+  BACKEND_DETAIL="http:$url"
+  return 0
+}
+
+build_payload() {
+  python3 - <<PY
+import json, os, socket, time
+payload = {
+  "hostname": socket.gethostname(),
+  "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+  "backend": os.environ.get("BACKEND_DETAIL", ""),
+  "on_battery": os.environ.get("ON_BATTERY", "0") == "1",
+  "ups_status": os.environ.get("UPS_STATUS", ""),
+  "battery_percent": os.environ.get("BATTERY_PERCENT") or None,
+  "runtime_seconds": os.environ.get("RUNTIME_SECONDS") or None,
+  "load_percent": os.environ.get("LOAD_PERCENT") or None,
+  "input_voltage": os.environ.get("INPUT_VOLTAGE") or None,
+}
+# coerce numerics when possible
+for key in ("battery_percent", "runtime_seconds", "load_percent", "input_voltage"):
+    val = payload[key]
+    if val is None or val == "":
+        payload[key] = None
+        continue
+    try:
+        if "." in str(val):
+            payload[key] = float(val)
+        else:
+            payload[key] = int(val)
+    except ValueError:
+        pass
+print(json.dumps(payload, separators=(",", ":")))
+PY
+}
+
+hc_ping() {
+  local url=$1 mode=$2 payload=$3
+  [ -n "$url" ] || return 0
+  local target=$url
+  case "$mode" in
+    fail) target="${url%/}/fail" ;;
+    success) target="${url%/}" ;;
+  esac
+  if ! curl --silent --show-error --fail --max-time 15 \
+      -H 'Content-Type: application/json' \
+      --data-binary "$payload" \
+      "$target" >/dev/null; then
+    log "healthchecks ping failed: $target"
+    return 1
+  fi
+  return 0
+}
+
+load_env
+
+ON_BATTERY=0
+BATTERY_PERCENT=""
+RUNTIME_SECONDS=""
+LOAD_PERCENT=""
+INPUT_VOLTAGE=""
+UPS_STATUS=""
+BACKEND_DETAIL=""
+
+backend=${UPS_BACKEND:-nut}
+case "$backend" in
+  nut)
+    read_nut || exit 1
+    ;;
+  http)
+    read_http || exit 1
+    ;;
+  *)
+    log "unknown UPS_BACKEND=$backend (use nut|http)"
+    exit 1
+    ;;
+esac
+
+export ON_BATTERY BATTERY_PERCENT RUNTIME_SECONDS LOAD_PERCENT INPUT_VOLTAGE UPS_STATUS BACKEND_DETAIL
+payload=$(build_payload)
+log "status on_battery=$ON_BATTERY ups_status=$UPS_STATUS battery=${BATTERY_PERCENT:-?} load=${LOAD_PERCENT:-?} runtime=${RUNTIME_SECONDS:-?}"
+
+# Heartbeat: always success while the monitor can talk to the UPS
+hc_ping "${HEALTHCHECKS_HEARTBEAT_URL:-}" success "$payload" || true
+
+# Mains: success on AC, fail on battery
+if [ "$ON_BATTERY" -eq 1 ]; then
+  hc_ping "${HEALTHCHECKS_MAINS_URL:-}" fail "$payload" || true
+  mains_state=battery
+else
+  hc_ping "${HEALTHCHECKS_MAINS_URL:-}" success "$payload" || true
+  mains_state=ac
+fi
+
+prev=""
+[ -f "$LAST_STATE" ] && prev=$(cat "$LAST_STATE" 2>/dev/null || true)
+if [ "$prev" != "$mains_state" ]; then
+  log "mains state changed: ${prev:-unknown} -> $mains_state"
+fi
+printf '%s\n' "$mains_state" > "$LAST_STATE"

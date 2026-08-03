@@ -1,0 +1,9 @@
+[Unit]
+Description=UPS monitor Healthchecks reporter
+Wants=network-online.target
+After=network-online.target ups-firstboot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ups-monitor
+Nice=10

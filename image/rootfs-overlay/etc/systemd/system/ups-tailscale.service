@@ -1,0 +1,15 @@
+[Unit]
+Description=UPS board Tailscale enrollment
+Wants=network-online.target tailscaled.service
+After=NetworkManager-wait-online.service network-online.target ups-firstboot.service tailscaled.service
+ConditionPathExists=!/var/lib/ups-board/tailscale.done
+
+[Service]
+Type=oneshot
+TimeoutStartSec=5min
+ExecStart=/usr/local/bin/ups-tailscale-enroll
+Restart=on-failure
+RestartSec=45s
+
+[Install]
+WantedBy=multi-user.target

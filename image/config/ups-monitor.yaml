@@ -1,0 +1,22 @@
+include:
+  file: bookworm-minbase.yaml
+
+image:
+  name: pi-ups-monitor
+  boot_part_size: 256M
+  root_part_size: 4G
+
+device:
+  user1: skg
+  user1sudo: nopasswd
+  storage_type: sd
+
+ssh:
+  pubkey_only: y
+
+layer:
+  app: ups-monitor
+  ssh: openssh-server
+
+ups:
+  poll_interval_secs: 60

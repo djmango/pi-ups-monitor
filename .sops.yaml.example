@@ -1,0 +1,10 @@
+# Filled automatically by: bun run init-sops
+# Or copy and set your ssh-ed25519 public key:
+#
+# creation_rules:
+#   - path_regex: secrets\.yaml$
+#     age: ssh-ed25519 AAAA... comment
+
+creation_rules:
+  - path_regex: secrets\.yaml$
+    age: ssh-ed25519 REPLACE_ME

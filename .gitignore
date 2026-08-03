@@ -1,0 +1,11 @@
+build/
+deploy/
+secrets.yaml
+.sops.yaml
+*.log
+.DS_Store
+*.img
+*.img.zst
+*.img.xz
+*.sparse*
+*.tar.zst
