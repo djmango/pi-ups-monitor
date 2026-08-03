@@ -243,9 +243,6 @@ mmdebstrap:
       fi
     - |-
       set -eu
-      interval="${IGconf_ups_poll_interval_secs:-60}"
-      sed -i "s/@UPS_POLL_INTERVAL@/${interval}/g" \
-        "$1/etc/systemd/system/ups-monitor.timer"
       chmod 0755 \
         "$1/usr/local/bin/ups-firstboot" \
         "$1/usr/local/bin/ups-tailscale-enroll" \
