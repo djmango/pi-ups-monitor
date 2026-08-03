@@ -1,0 +1,26 @@
+# Plain (non-secret) board config. Checked into git.
+# Secrets live in SOPS-encrypted secrets.yaml (wifi password, tailscale key, HC URLs).
+
+WIFI_COUNTRY: US
+WIFI_SSID: "" # set here, or leave empty and put it in secrets.yaml
+
+UPS_BACKEND: nut
+UPS_NUT_NAME: ups@localhost
+
+# Used when UPS_BACKEND=http
+UPS_HTTP_URL: ""
+UPS_HTTP_ON_BATTERY_PATH: on_battery
+UPS_HTTP_BATTERY_PERCENT_PATH: battery.charge
+UPS_HTTP_RUNTIME_SECONDS_PATH: battery.runtime
+UPS_HTTP_LOAD_PERCENT_PATH: ups.load
+UPS_HTTP_HEADERS: ""
+
+# Matches Healthchecks heartbeat period guidance (~60s poll → 2m period / 5m grace)
+UPS_POLL_INTERVAL_SECS: "60"
+
+HOSTNAME_PREFIX: skg-rpi-ups
+RPI_DEVICE_CLASS: pi3
+RPI_USER: skg
+RPI_IMAGE_NAME: pi-ups-monitor
+SSH_PUBKEY_PATH: ~/.ssh/id_ed25519.pub
+TAILSCALE_UP_ARGS: --accept-routes --accept-dns=false

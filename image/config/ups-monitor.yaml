@@ -7,6 +7,7 @@ image:
   root_part_size: 4G
 
 device:
+  layer: rpi3
   user1: skg
   user1sudo: nopasswd
   storage_type: sd

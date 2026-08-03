@@ -27,14 +27,18 @@ Point `HEALTHCHECKS_HEARTBEAT_URL` and `HEALTHCHECKS_MAINS_URL` at the ping URLs
 
 Suggested periods: heartbeat period ≈ poll interval (60s), grace a few minutes. Mains period can be longer; the important part is the `/fail` on power loss.
 
-## Secrets
+## Secrets vs config
+
+Non-secret settings live in plain `config.yaml` (backend, poll interval, device class, etc.).
+
+Credentials and ping URLs live in SOPS-encrypted `secrets.yaml`:
 
 ```bash
 bun run init-sops   # or: ./scripts/build-image.sh --init-sops
 sops secrets.yaml
 ```
 
-`secrets.yaml` and `.sops.yaml` are gitignored. Decrypt uses `~/.ssh/id_ed25519` (override with `SOPS_AGE_SSH_PRIVATE_KEY_FILE`).
+`secrets.yaml` and `.sops.yaml` are gitignored. Recipients are your **SSH ed25519 public key** (same pattern as GMT). SOPS labels that under the `age:` field — that is not a separate `age-keygen` key; it is still your SSH key. Decrypt uses `~/.ssh/id_ed25519` (override with `SOPS_AGE_SSH_PRIVATE_KEY_FILE`).
 
 ## Build & flash
 
@@ -59,9 +63,9 @@ Logs also land on the boot partition (`/boot/firmware/ups-*.log`) so you can rea
 
 ## UPS backends
 
-### NUT (default)
+### NUT / APC USB (default)
 
-Install/configure NUT on the Pi (or point at a NUT server). Set:
+Image includes `nut-server` + `usbhid-ups` preconfigured for a local APC USB UPS (e.g. Back-UPS ES). Set:
 
 ```yaml
 UPS_BACKEND: nut

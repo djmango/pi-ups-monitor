@@ -124,6 +124,7 @@ mmdebstrap:
     - libnss-mdns
     - network-manager
     - nut-client
+    - nut-server
     - procps
     - python3
     - rfkill
@@ -257,8 +258,17 @@ mmdebstrap:
     - $BDEBSTRAP_HOOKS/enable-units "$1" NetworkManager avahi-daemon
     - |-
       set -eu
+      # NUT config permissions (driver talks to APC USB HID devices)
+      if [ -d "$1/etc/nut" ]; then
+        chown -R root:nut "$1/etc/nut" 2>/dev/null || true
+        chmod 640 "$1/etc/nut"/*.conf "$1/etc/nut"/*.users 2>/dev/null || true
+      fi
       mkdir -p "$1/etc/systemd/system/multi-user.target.wants" \
-               "$1/etc/systemd/system/timers.target.wants"
+               "$1/etc/systemd/system/timers.target.wants" \
+               "$1/etc/systemd/system/nut.target.wants"
       ln -sf ../ups-firstboot.service "$1/etc/systemd/system/multi-user.target.wants/ups-firstboot.service"
       ln -sf ../ups-tailscale.service "$1/etc/systemd/system/multi-user.target.wants/ups-tailscale.service"
       ln -sf ../ups-monitor.timer "$1/etc/systemd/system/timers.target.wants/ups-monitor.timer"
+      ln -sf /lib/systemd/system/nut-server.service "$1/etc/systemd/system/nut.target.wants/nut-server.service" 2>/dev/null || true
+      ln -sf /lib/systemd/system/nut-driver@.service "$1/etc/systemd/system/nut-driver@ups.service" 2>/dev/null || true
+      ln -sf ../nut-driver@ups.service "$1/etc/systemd/system/nut.target.wants/nut-driver@ups.service" 2>/dev/null || true

@@ -15,8 +15,9 @@ Options:
 
 Inputs, in precedence order:
   1. Environment variables
-  2. secrets.yaml decrypted with sops
-  3. Interactive prompts
+  2. secrets.yaml decrypted with sops (credentials / ping URLs)
+  3. config.yaml (non-secret board settings)
+  4. Interactive prompts (only for missing required secrets)
 EOF
 }
 
@@ -43,6 +44,7 @@ build_dir="$repo_root/build"
 source_dir="$build_dir/source"
 work_dir="$build_dir/work"
 deploy_dir="$repo_root/deploy"
+config_file="$repo_root/config.yaml"
 secrets_file="$repo_root/secrets.yaml"
 sops_config="$repo_root/.sops.yaml"
 
@@ -57,6 +59,31 @@ require_command() {
 
 expand_path() {
   python3 -c 'import os, sys; print(os.path.expanduser(sys.argv[1]))' "$1"
+}
+
+export_yaml_vars() {
+  # Export top-level YAML scalars as env vars. Does not override existing env.
+  local file=$1
+  python3 - "$file" <<'PY'
+import os, shlex, sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+for raw in text.splitlines():
+    line = raw.split("#", 1)[0].rstrip()
+    if not line or ":" not in line:
+        continue
+    key, _, value = line.partition(":")
+    key = key.strip()
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    if not key or key in os.environ:
+        continue
+    if value == "":
+        continue
+    print(f"export {key}={shlex.quote(value)}")
+PY
 }
 
 write_sops_config() {
@@ -96,19 +123,39 @@ Created .sops.yaml and encrypted secrets.yaml using your SSH public key.
 Edit secrets with:
   sops secrets.yaml
 
+Non-secret settings: config.yaml
+
 Then build with:
   bun run build
 EOF
   exit 0
 fi
 
-load_secrets() {
-  if [ -f "$secrets_file" ]; then
-    require_command sops
+load_config() {
+  if [ -f "$config_file" ]; then
     require_command python3
     set -a
     # shellcheck disable=SC1090
-    . <(sops -d --output-type json "$secrets_file" | python3 -c '
+    . <(export_yaml_vars "$config_file")
+    set +a
+  fi
+}
+
+load_secrets() {
+  if [ ! -f "$secrets_file" ]; then
+    return 0
+  fi
+  # Prefer already-exported env (e.g. CI / pre-decrypted shell) so builds work
+  # without a TTY for the SSH key passphrase.
+  if [ -n "${WIFI_PASSWORD:-}" ] && [ -n "${WIFI_SSID:-}" ]; then
+    echo "Using secrets from environment (skipping sops decrypt)."
+    return 0
+  fi
+  require_command sops
+  require_command python3
+  set -a
+  # shellcheck disable=SC1090
+  . <(sops -d --output-type json "$secrets_file" | python3 -c '
 import json
 import shlex
 import sys
@@ -117,10 +164,10 @@ data = json.load(sys.stdin)
 for key, value in data.items():
     if value is None:
         continue
+    # Secrets always win over config.yaml / empty placeholders
     print(f"export {key}={shlex.quote(str(value))}")
 ')
-    set +a
-  fi
+  set +a
 }
 
 assign_var() {
@@ -179,6 +226,8 @@ prompt_secret() {
   assign_var "$name" "$answer"
 }
 
+# Plain config first, then SOPS secrets (secrets override).
+load_config
 load_secrets
 
 if [ "$no_prompt" -eq 1 ] && [ ! -f "$secrets_file" ]; then
@@ -187,24 +236,27 @@ if [ "$no_prompt" -eq 1 ] && [ ! -f "$secrets_file" ]; then
   exit 1
 fi
 
-prompt_var WIFI_COUNTRY "Wi-Fi country code" "US"
+# Only prompt for credentials / ping URLs if missing; board settings come from config.yaml.
 prompt_var WIFI_SSID "Wi-Fi SSID" "${WIFI_SSID:-}"
 prompt_secret WIFI_PASSWORD "Wi-Fi password" 1
 prompt_secret TAILSCALE_AUTH_KEY "Tailscale auth key (leave blank to skip)" 0
 prompt_var HEALTHCHECKS_HEARTBEAT_URL "Healthchecks heartbeat ping URL" "${HEALTHCHECKS_HEARTBEAT_URL:-}"
 prompt_var HEALTHCHECKS_MAINS_URL "Healthchecks mains ping URL" "${HEALTHCHECKS_MAINS_URL:-}"
-prompt_var UPS_BACKEND "UPS backend (nut|http)" "nut"
-prompt_var UPS_NUT_NAME "NUT UPS name" "ups@localhost"
+
+# Apply config defaults for anything still unset
+prompt_var WIFI_COUNTRY "Wi-Fi country code" "${WIFI_COUNTRY:-US}"
+prompt_var UPS_BACKEND "UPS backend (nut|http)" "${UPS_BACKEND:-nut}"
+prompt_var UPS_NUT_NAME "NUT UPS name" "${UPS_NUT_NAME:-ups@localhost}"
 prompt_var UPS_HTTP_URL "HTTP UPS status URL (if backend=http)" "${UPS_HTTP_URL:-}"
-prompt_var UPS_POLL_INTERVAL_SECS "Poll interval seconds" "60"
-prompt_var HOSTNAME_PREFIX "Hostname prefix" "skg-rpi-ups"
-prompt_var RPI_DEVICE_CLASS "RPi device class (pi3, pi4, pi5, cm4, cm5, zero2w)" "pi3"
-prompt_var RPI_USER "Linux username" "skg"
-prompt_var RPI_IMAGE_NAME "Image name" "pi-ups-monitor"
-prompt_var SSH_PUBKEY_PATH "SSH public key path" "$HOME/.ssh/id_ed25519.pub"
+prompt_var UPS_POLL_INTERVAL_SECS "Poll interval seconds" "${UPS_POLL_INTERVAL_SECS:-60}"
+prompt_var HOSTNAME_PREFIX "Hostname prefix" "${HOSTNAME_PREFIX:-skg-rpi-ups}"
+prompt_var RPI_DEVICE_CLASS "RPi device class (pi3, pi4, pi5, cm4, cm5, zero2w)" "${RPI_DEVICE_CLASS:-pi3}"
+prompt_var RPI_USER "Linux username" "${RPI_USER:-skg}"
+prompt_var RPI_IMAGE_NAME "Image name" "${RPI_IMAGE_NAME:-pi-ups-monitor}"
+prompt_var SSH_PUBKEY_PATH "SSH public key path" "${SSH_PUBKEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
 
 if [ -z "${WIFI_SSID:-}" ]; then
-  echo "WIFI_SSID is required." >&2
+  echo "WIFI_SSID is required (set in config.yaml or secrets.yaml)." >&2
   exit 1
 fi
 
@@ -244,6 +296,20 @@ export UPS_HTTP_RUNTIME_SECONDS_PATH="${UPS_HTTP_RUNTIME_SECONDS_PATH:-battery.r
 export UPS_HTTP_LOAD_PERCENT_PATH="${UPS_HTTP_LOAD_PERCENT_PATH:-ups.load}"
 export UPS_HTTP_HEADERS="${UPS_HTTP_HEADERS:-}"
 
+case "$RPI_DEVICE_CLASS" in
+  pi3) RPI_DEVICE_LAYER=rpi3 ;;
+  pi4) RPI_DEVICE_LAYER=rpi4 ;;
+  pi5) RPI_DEVICE_LAYER=rpi5 ;;
+  cm4) RPI_DEVICE_LAYER=rpi-cm4 ;;
+  cm5) RPI_DEVICE_LAYER=rpi-cm5 ;;
+  zero2w) RPI_DEVICE_LAYER=rpizero2w ;;
+  *)
+    echo "Unsupported RPI_DEVICE_CLASS=$RPI_DEVICE_CLASS" >&2
+    exit 1
+    ;;
+esac
+export RPI_DEVICE_LAYER
+
 require_command rsync
 
 rm -rf "$source_dir"
@@ -257,6 +323,7 @@ chmod 0600 "$ssh_dir/authorized_keys"
 
 build_args=(
   "IGconf_sys_workroot=/work"
+  "IGconf_device_layer=$RPI_DEVICE_LAYER"
   "IGconf_device_class=$RPI_DEVICE_CLASS"
   "IGconf_device_user1=$RPI_USER"
   "IGconf_image_name=$RPI_IMAGE_NAME"
@@ -324,6 +391,7 @@ run_build_cmd='
 set -euo pipefail
 args=(
   IGconf_sys_workroot=/work
+  "IGconf_device_layer=$RPI_DEVICE_LAYER"
   "IGconf_device_class=$RPI_DEVICE_CLASS"
   "IGconf_device_user1=$RPI_USER"
   "IGconf_image_name=$RPI_IMAGE_NAME"
@@ -445,6 +513,7 @@ else
     -v /dev:/dev \
     -v "$work_volume:/work" \
     -e RPI_DEVICE_CLASS \
+    -e RPI_DEVICE_LAYER \
     -e RPI_USER \
     -e RPI_IMAGE_NAME \
     -e TAILSCALE_AUTH_KEY \
