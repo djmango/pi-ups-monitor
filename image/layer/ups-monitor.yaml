@@ -3,7 +3,8 @@
 # X-Env-Layer-Version: 1.0.0
 # X-Env-Layer-Category: app
 # X-Env-Layer-Desc: Headless UPS monitor with Healthchecks.io reporting and first-boot provisioning.
-# X-Env-Layer-Requires: rpi-user-credentials,systemd-net-min,systemd-timesyncd,openssh-server
+# X-Env-Layer-Requires: rpi-user-credentials,systemd-net-min,openssh-server
+# X-Env-Layer-Provides: time-daemon
 #
 # X-Env-VarRequires: IGconf_device_user1
 # X-Env-VarRequires-Valid: string
@@ -117,6 +118,7 @@ mmdebstrap:
   packages:
     - avahi-daemon
     - ca-certificates
+    - chrony
     - curl
     - iproute2
     - iw
@@ -252,7 +254,7 @@ mmdebstrap:
       ug=$(awk -F: -v u="$user" '$1==u{print $3":"$4}' "$1/etc/passwd")
       chown "$ug" "$1/home/$user"
       [ ! -d "$1/home/$user/.ssh" ] || chown -R "$ug" "$1/home/$user/.ssh"
-    - $BDEBSTRAP_HOOKS/enable-units "$1" NetworkManager avahi-daemon
+    - $BDEBSTRAP_HOOKS/enable-units "$1" NetworkManager avahi-daemon chrony
     - |-
       set -eu
       # NUT config permissions (driver talks to APC USB HID devices)

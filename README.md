@@ -13,6 +13,7 @@ Same provisioning pattern as the [Great Man Theory](https://github.com/djmango/g
 - Wi-Fi via NetworkManager + Tailscale
 - `ups-monitor` timer that polls the UPS and pings Healthchecks
 - Backends: **NUT** (`upsc`) or a generic **HTTP JSON** UPS API
+- chrony for clock discipline (see [Clock](#clock))
 
 ## Healthchecks setup
 
@@ -26,6 +27,19 @@ Create two checks:
 Point `HEALTHCHECKS_HEARTBEAT_URL` and `HEALTHCHECKS_MAINS_URL` at the ping URLs (full `https://hc-ping.com/<uuid>`).
 
 Suggested periods: heartbeat period ≈ poll interval (60s), grace a few minutes. Mains period can be longer; the important part is the `/fail` on power loss.
+
+## Clock
+
+The board has no real-time clock, so it boots with a stale time. A stale clock breaks the report without raising an error: curl rejects the Healthchecks TLS certificate as "not yet valid", so every ping is lost while the service still exits 0. Healthchecks then sees a missing heartbeat and marks the check down after the grace period, which looks exactly like the Pi being switched off.
+
+The image installs **chrony**, enables it, and writes `/etc/chrony/conf.d/10-ups-board.conf`, which steps the clock instead of slewing it. `systemd-timesyncd` was tried first and never polled on this hardware, so it is not part of the image. chrony and `systemd-timesyncd` both provide `time-daemon`, so only one can be installed.
+
+Check the clock on a board with:
+
+```bash
+timedatectl
+chronyc tracking
+```
 
 ## Secrets vs config
 
