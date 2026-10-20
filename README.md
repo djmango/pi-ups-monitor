@@ -101,6 +101,17 @@ UPS_HTTP_LOAD_PERCENT_PATH: ups.load
 
 Boolean-ish values accepted for on-battery: `true`/`false`, `1`/`0`, `yes`/`no`, `OB` (NUT-style).
 
+## Other UPS hosts
+
+Not every UPS is on a Pi. The rack UPS (CyberPower CP1500PFCLCDa, USB on the
+pve2 Proxmox host) uses the same two Healthchecks checks and the same payload
+shape, but the monitor is a systemd timer instead of a Pi image.
+
+There, NUT runs on the Proxmox host that owns the USB device and the monitor
+is a systemd timer on a separate host reading `upsc cyberpower@pve2` over the
+LAN. It reuses these two checks and this JSON payload shape, in a private
+infrastructure repo rather than an image build.
+
 ## Recovery
 
 ```bash
